@@ -32,6 +32,127 @@ def create_server_size_folder(server_name, total_size_kb):
     return size_folder
 
 
+def find_existing_folders(server_name):
+    """기존에 저장된 폴더들을 찾아서 반환 (생성 시간 순으로 정렬)"""
+    existing_folders = []
+    if os.path.exists(server_name):
+        for item in os.listdir(server_name):
+            item_path = os.path.join(server_name, item)
+            if os.path.isdir(item_path):
+                # 폴더 이름이 숫자인지 확인 (용량KB)
+                try:
+                    size_kb = int(item)
+                    # 폴더 생성 시간 가져오기
+                    creation_time = os.path.getctime(item_path)
+                    existing_folders.append((size_kb, item_path, creation_time))
+                except ValueError:
+                    continue
+    # 생성 시간 순으로 정렬 (최신이 마지막)
+    return sorted(existing_folders, key=lambda x: x[2])
+
+
+def compare_file_changes(old_manifest, new_manifest):
+    """파일 변경사항을 비교하여 반환"""
+    old_files = {file_entry["path"]: file_entry for file_entry in old_manifest.get("file", [])}
+    new_files = {file_entry["path"]: file_entry for file_entry in new_manifest.get("file", [])}
+    
+    # 파일 변경사항 분석
+    added_files = []
+    removed_files = []
+    changed_files = []
+    
+    # 새로 추가된 파일들
+    for path, file_entry in new_files.items():
+        if path not in old_files:
+            added_files.append({
+                "path": path,
+                "size": int(file_entry.get("size", 0)),
+                "hash": file_entry.get("hash", "")
+            })
+    
+    # 삭제된 파일들
+    for path, file_entry in old_files.items():
+        if path not in new_files:
+            removed_files.append({
+                "path": path,
+                "size": int(file_entry.get("size", 0)),
+                "hash": file_entry.get("hash", "")
+            })
+    
+    # 변경된 파일들 (해시가 다른 파일들)
+    for path, new_file_entry in new_files.items():
+        if path in old_files:
+            old_file_entry = old_files[path]
+            if old_file_entry.get("hash") != new_file_entry.get("hash"):
+                changed_files.append({
+                    "path": path,
+                    "old_size": int(old_file_entry.get("size", 0)),
+                    "new_size": int(new_file_entry.get("size", 0)),
+                    "old_hash": old_file_entry.get("hash", ""),
+                    "new_hash": new_file_entry.get("hash", "")
+                })
+    
+    return {
+        "added": added_files,
+        "removed": removed_files,
+        "changed": changed_files
+    }
+
+
+def compare_with_existing(server_name, new_cfg, new_cfg2, new_manifest, new_size_kb):
+    """새로 받은 응답과 기존 저장된 응답들을 비교"""
+    existing_folders = find_existing_folders(server_name)
+    
+    if not existing_folders:
+        return None
+    
+    # 가장 최근 폴더 찾기 (생성 시간 기준)
+    latest_folder = existing_folders[-1]
+    latest_size_kb, latest_path, latest_time = latest_folder
+    
+    if latest_size_kb == new_size_kb:
+        return None
+    
+    # 기존 파일들 로드
+    try:
+        config_path = os.path.join(latest_path, f"config_{server_name}.json")
+        config2_path = os.path.join(latest_path, f"config2_{server_name}.json")
+        manifest_path = os.path.join(latest_path, f"manifest_{server_name}.json")
+        
+        with open(config_path, 'r', encoding='utf-8') as f:
+            old_cfg = json.load(f)
+        with open(config2_path, 'r', encoding='utf-8') as f:
+            old_cfg2 = json.load(f)
+        with open(manifest_path, 'r', encoding='utf-8') as f:
+            old_manifest = json.load(f)
+        
+        # 파일 변경사항 상세 분석
+        file_changes = compare_file_changes(old_manifest, new_manifest)
+        
+        # 파일 수 비교 (출력하지 않고 데이터만 수집)
+        old_file_count = len(old_manifest.get("file", []))
+        new_file_count = len(new_manifest.get("file", []))
+        
+        # 버전 정보 수집
+        old_ver = old_cfg.get("data", {}).get("game_latest_version", "Unknown")
+        new_ver = new_cfg.get("data", {}).get("game_latest_version", "Unknown")
+        
+        return {
+            "old_size_kb": latest_size_kb,
+            "new_size_kb": new_size_kb,
+            "old_version": old_ver,
+            "new_version": new_ver,
+            "old_file_count": old_file_count,
+            "new_file_count": new_file_count,
+            "old_folder": latest_path,
+            "new_folder": None,  # 아직 저장되지 않음
+            "file_changes": file_changes
+        }
+        
+    except Exception as e:
+        return None
+
+
 def save_server_request(server_name, request_type, data, date_folder):
     """서버별 요청 데이터를 날짜별 폴더에 저장"""
     filename = f"{request_type}_{server_name}.json"
@@ -71,40 +192,72 @@ def get_server_info(server, date_folder=None):
                 
                 size_kb = total_size / 1024
                 filename = os.path.basename(path) if path else "Unknown"
+                file_basename = os.path.splitext(filename)[0]  # 확장자 제거
+                total_size_kb_int = int(total_size / 1024)  # KB로 변환 (정수)
+                
+                # 기존 데이터와 비교
+                diff_info = compare_with_existing(file_basename, cfg, cfg2, manifest, total_size_kb_int)
                 
                 # 요청값 저장 (파일명 기반)
                 if date_folder:
-                    file_basename = os.path.splitext(filename)[0]  # 확장자 제거
-                    total_size_kb_int = int(total_size / 1024)  # KB로 변환 (정수)
                     server_size_folder = create_server_size_folder(file_basename, total_size_kb_int)
                     save_server_request(file_basename, "config", cfg, server_size_folder)
                     save_server_request(file_basename, "config2", cfg2, server_size_folder)
                     save_server_request(file_basename, "manifest", manifest, server_size_folder)
+                    
+                    # diff 정보가 있으면 새 폴더 경로 업데이트
+                    if diff_info:
+                        diff_info["new_folder"] = server_size_folder
                 
-                return f"{ver} - {filename} ({size_kb:.0f}KB)", cfg, cfg2, manifest
+                return f"{ver} - {filename} ({size_kb:.0f}KB)", cfg, cfg2, manifest, diff_info
         
         filename = os.path.basename(path) if path else "Unknown"
-        return f"{ver} - {filename} (Size unknown)", None, None, None
+        return f"{ver} - {filename} (Size unknown)", None, None, None, None
     except Exception as e:
-        return f"Error: {str(e)[:20]}...", None, None, None
+        return f"Error: {str(e)[:20]}...", None, None, None, None
 
 def select_server():
     print("Fetching server information...")
     server_info = {}
     server_data = {}
+    diff_summary = []
     
-    print(f"[INFO] Saving request data to server-specific size(MB) folders.")
+    print(f"[INFO] Saving request data to server-specific size(KB) folders.")
     
     for k, v in SERVERS.items():
         print(f"  Checking {v['name']}...")
-        info, cfg, cfg2, manifest = get_server_info(v, True)  # 저장 활성화
+        info, cfg, cfg2, manifest, diff_info = get_server_info(v, True)  # 저장 활성화
         server_info[k] = info
         server_data[k] = {"cfg": cfg, "cfg2": cfg2, "manifest": manifest}
+        
+        # diff 정보가 있으면 요약에 추가
+        if diff_info:
+            diff_summary.append({
+                "server": v['name'],
+                "old_size": diff_info["old_size_kb"],
+                "new_size": diff_info["new_size_kb"],
+                "old_version": diff_info["old_version"],
+                "new_version": diff_info["new_version"],
+                "old_files": diff_info["old_file_count"],
+                "new_files": diff_info["new_file_count"],
+                "file_changes": diff_info.get("file_changes", {})
+            })
     
     print("\nSelect a server:")
     for k, v in SERVERS.items():
         info = server_info.get(k, "Unknown")
         print(f" {k}. {v['name']} - {info}")
+    
+    # diff 요약 출력
+    if diff_summary:
+        print(f"\n[DIFF SUMMARY] 변경사항 감지:")
+        for diff in diff_summary:
+            size_diff = diff["new_size"] - diff["old_size"]
+            file_diff = diff["new_files"] - diff["old_files"]
+            print(f"  {diff['server']}:")
+            print(f"    용량: {diff['old_size']}KB → {diff['new_size']}KB ({size_diff:+d}KB)")
+            print(f"    버전: {diff['old_version']} → {diff['new_version']}")
+            print(f"    파일: {diff['old_files']}개 → {diff['new_files']}개 ({file_diff:+d}개)")
     
     choice = input("\nEnter server number (1-4, default=1): ").strip() or "1"
     selected_server = SERVERS.get(choice, SERVERS["1"])
@@ -646,14 +799,32 @@ class ServerSelectorGUI:
                 # 현재 서버 정보 업데이트
                 self.root.after(0, lambda s=v['name']: self.progress_label.config(text=f"Checking {s}..."))
                 
-                info, cfg, cfg2, manifest = get_server_info(v, True)
+                info, cfg, cfg2, manifest, diff_info = get_server_info(v, True)
                 self.server_data[k] = {
                     "server": v,
                     "info": info,
                     "cfg": cfg,
                     "cfg2": cfg2,
-                    "manifest": manifest
+                    "manifest": manifest,
+                    "diff_info": diff_info
                 }
+                
+                # diff 정보가 있으면 즉시 표시
+                if diff_info:
+                    diff_summary = [{
+                        "server": v['name'],
+                        "old_size": diff_info["old_size_kb"],
+                        "new_size": diff_info["new_size_kb"],
+                        "old_version": diff_info["old_version"],
+                        "new_version": diff_info["new_version"],
+                        "old_files": diff_info["old_file_count"],
+                        "new_files": diff_info["new_file_count"],
+                        "file_changes": diff_info.get("file_changes", {}),
+                        "server_config": v,  # 서버 설정 정보 추가
+                        "manifest": manifest  # manifest 정보 추가
+                    }]
+                    # 즉시 diff 창 표시
+                    self.root.after(0, lambda summary=diff_summary: self.show_diff_summary(summary))
                 
                 # 서버 정보를 리스트박스에 추가
                 self.root.after(0, lambda k=k, v=v, info=info: self.server_listbox.insert(tk.END, f"{k}. {v['name']} - {info}"))
@@ -679,6 +850,290 @@ class ServerSelectorGUI:
                 for child in widget.winfo_children():
                     if isinstance(child, ttk.Button):
                         child.config(state='normal')
+    
+    def show_diff_summary(self, diff_summary):
+        """diff 요약을 별도 창으로 표시"""
+        server_name = diff_summary[0]['server'] if diff_summary else "Unknown"
+        diff_window = tk.Toplevel(self.root)
+        diff_window.title(f"Update Summary - {server_name}")
+        diff_window.geometry("1000x700")
+        
+        # 서버 정보 저장 (다운로드용)
+        diff_window.server_config = diff_summary[0]['server_config']
+        diff_window.manifest = diff_summary[0]['manifest']
+        
+        # 메인 프레임
+        main_frame = ttk.Frame(diff_window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 제목
+        ttk.Label(main_frame, text=f"🔄 {server_name} Update Summary", font=("Arial", 14, "bold")).pack(pady=10)
+        
+        # 서버 기본 정보
+        info_frame = ttk.LabelFrame(main_frame, text="Server Information", padding=10)
+        info_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        diff = diff_summary[0]  # 단일 서버 정보
+        size_diff = diff["new_size"] - diff["old_size"]
+        file_diff = diff["new_files"] - diff["old_files"]
+        
+        ttk.Label(info_frame, text=f"Size: {diff['old_size']:,}KB → {diff['new_size']:,}KB ({size_diff:+d}KB)", font=("Arial", 10)).pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Version: {diff['old_version']} → {diff['new_version']}", font=("Arial", 10)).pack(anchor=tk.W)
+        ttk.Label(info_frame, text=f"Files: {diff['old_files']:,} → {diff['new_files']:,} ({file_diff:+d})", font=("Arial", 10)).pack(anchor=tk.W)
+        
+        # 파일 변경사항이 있으면 상세 표시
+        if "file_changes" in diff and diff["file_changes"]:
+            file_changes = diff["file_changes"]
+            
+            # 추가된 파일들
+            if file_changes["added"]:
+                self.create_file_list_frame(main_frame, "➕ Added Files", file_changes["added"], "added")
+            
+            # 삭제된 파일들
+            if file_changes["removed"]:
+                self.create_file_list_frame(main_frame, "➖ Removed Files", file_changes["removed"], "removed")
+            
+            # 변경된 파일들
+            if file_changes["changed"]:
+                self.create_file_list_frame(main_frame, "🔄 Changed Files", file_changes["changed"], "changed")
+        
+        # 닫기 버튼
+        ttk.Button(main_frame, text="Close", command=diff_window.destroy).pack(pady=10)
+    
+    def create_file_list_frame(self, parent, title, files, change_type):
+        """파일 목록을 표시하는 프레임 생성"""
+        frame = ttk.LabelFrame(parent, text=title, padding=5)
+        frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # 상단 버튼 프레임
+        button_frame = ttk.Frame(frame)
+        button_frame.pack(fill=tk.X, pady=(0, 5))
+        
+        ttk.Button(button_frame, text="Select All", command=lambda: self.select_all_files(tree)).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="Deselect All", command=lambda: self.deselect_all_files(tree)).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Button(button_frame, text="Download Selected", command=lambda: self.download_selected_files(tree, change_type)).pack(side=tk.LEFT, padx=(0, 5))
+        
+        # Treeview 생성
+        columns = ("Select", "File", "Size", "Hash", "Change")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=8)
+        
+        # 컬럼 설정
+        tree.heading("Select", text="☑")
+        tree.heading("File", text="File Path")
+        tree.heading("Size", text="Size")
+        tree.heading("Hash", text="Hash")
+        tree.heading("Change", text="Change")
+        
+        tree.column("Select", width=50, anchor=tk.CENTER)
+        tree.column("File", width=300, anchor=tk.W)
+        tree.column("Size", width=120, anchor=tk.E)
+        tree.column("Hash", width=120, anchor=tk.W)
+        tree.column("Change", width=80, anchor=tk.E)
+        
+        # 체크박스 클릭 이벤트
+        tree.bind("<Button-1>", lambda e: self.toggle_file_selection(tree, e))
+        
+        # 스크롤바
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scrollbar.set)
+        
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 파일 데이터 추가
+        for file_info in files:
+            if change_type == "added":
+                size_kb = file_info["size"] / 1024
+                hash_short = file_info["hash"][:16] if file_info["hash"] else "N/A"
+                tree.insert("", tk.END, values=(
+                    "☐",  # 체크박스
+                    file_info["path"],
+                    f"{size_kb:.1f}KB",
+                    hash_short,
+                    "+"
+                ))
+            elif change_type == "removed":
+                size_kb = file_info["size"] / 1024
+                hash_short = file_info["hash"][:16] if file_info["hash"] else "N/A"
+                tree.insert("", tk.END, values=(
+                    "☐",  # 체크박스
+                    file_info["path"],
+                    f"{size_kb:.1f}KB",
+                    hash_short,
+                    "-"
+                ))
+            elif change_type == "changed":
+                size_diff = file_info["new_size"] - file_info["old_size"]
+                old_size_kb = file_info["old_size"] / 1024
+                new_size_kb = file_info["new_size"] / 1024
+                old_hash_short = file_info["old_hash"][:8] if file_info["old_hash"] else "N/A"
+                new_hash_short = file_info["new_hash"][:8] if file_info["new_hash"] else "N/A"
+                tree.insert("", tk.END, values=(
+                    "☐",  # 체크박스
+                    file_info["path"],
+                    f"{old_size_kb:.1f}KB → {new_size_kb:.1f}KB",
+                    f"{old_hash_short}→{new_hash_short}",
+                    f"{size_diff:+d}B"
+                ))
+        
+        # 요약 정보 표시
+        if files:
+            total_count = len(files)
+            if change_type == "added":
+                total_size = sum(f["size"] for f in files)
+                summary_text = f"Total: {total_count} files, {total_size/1024:.1f}KB"
+            elif change_type == "removed":
+                total_size = sum(f["size"] for f in files)
+                summary_text = f"Total: {total_count} files, {total_size/1024:.1f}KB"
+            elif change_type == "changed":
+                total_size_diff = sum(f["new_size"] - f["old_size"] for f in files)
+                summary_text = f"Total: {total_count} files, {total_size_diff/1024:+.1f}KB"
+            
+            ttk.Label(frame, text=summary_text, font=("Arial", 9, "italic")).pack(pady=2)
+        
+        return tree
+    
+    def toggle_file_selection(self, tree, event):
+        """파일 선택 토글"""
+        item = tree.identify_row(event.y)
+        if item:
+            values = list(tree.item(item, "values"))
+            if values[0] == "☐":
+                values[0] = "☑"
+            else:
+                values[0] = "☐"
+            tree.item(item, values=values)
+    
+    def select_all_files(self, tree):
+        """모든 파일 선택"""
+        for item in tree.get_children():
+            values = list(tree.item(item, "values"))
+            values[0] = "☑"
+            tree.item(item, values=values)
+    
+    def deselect_all_files(self, tree):
+        """모든 파일 선택 해제"""
+        for item in tree.get_children():
+            values = list(tree.item(item, "values"))
+            values[0] = "☐"
+            tree.item(item, values=values)
+    
+    def download_selected_files(self, tree, change_type):
+        """선택된 파일들 다운로드"""
+        selected_files = []
+        for item in tree.get_children():
+            values = tree.item(item, "values")
+            if values[0] == "☑":  # 선택된 파일
+                file_path = values[1]
+                selected_files.append(file_path)
+        
+        if not selected_files:
+            messagebox.showwarning("Warning", "No files selected for download.")
+            return
+        
+        # 다운로드 디렉토리 선택
+        download_dir = filedialog.askdirectory(title="Select download directory")
+        if not download_dir:
+            return
+        
+        # diff 창에서 서버 정보 가져오기
+        diff_window = tree.master.master.master  # tree -> frame -> main_frame -> diff_window
+        server_config = diff_window.server_config
+        manifest = diff_window.manifest
+        
+        # 다운로드 시작
+        self.start_file_download(selected_files, server_config, manifest, download_dir, change_type)
+    
+    def start_file_download(self, selected_files, server_config, manifest, download_dir, change_type):
+        """파일 다운로드 시작"""
+        # 다운로드 진행 창 생성
+        progress_window = tk.Toplevel(self.root)
+        progress_window.title(f"Downloading {change_type} files")
+        progress_window.geometry("600x400")
+        progress_window.grab_set()  # 모달 창으로 설정
+        
+        # 메인 프레임
+        main_frame = ttk.Frame(progress_window)
+        main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # 제목
+        ttk.Label(main_frame, text=f"Downloading {len(selected_files)} files", font=("Arial", 12, "bold")).pack(pady=10)
+        
+        # 진행률 표시
+        progress_var = tk.DoubleVar()
+        progress_bar = ttk.Progressbar(main_frame, variable=progress_var, maximum=100)
+        progress_bar.pack(fill=tk.X, pady=5)
+        
+        # 상태 라벨
+        status_label = ttk.Label(main_frame, text="Preparing download...", font=("Arial", 10))
+        status_label.pack(pady=5)
+        
+        # 파일 목록 표시
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        file_listbox = tk.Listbox(list_frame, font=("Consolas", 9))
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=file_listbox.yview)
+        file_listbox.configure(yscrollcommand=scrollbar.set)
+        
+        file_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # 취소 버튼
+        cancel_button = ttk.Button(main_frame, text="Cancel", command=progress_window.destroy)
+        cancel_button.pack(pady=10)
+        
+        # 백그라운드에서 다운로드 실행
+        download_thread = threading.Thread(target=self.download_files_background, 
+                                         args=(selected_files, server_config, manifest, download_dir, 
+                                              progress_var, status_label, file_listbox, progress_window))
+        download_thread.daemon = True
+        download_thread.start()
+    
+    def download_files_background(self, selected_files, server_config, manifest, download_dir, 
+                                progress_var, status_label, file_listbox, progress_window):
+        """백그라운드에서 파일 다운로드"""
+        try:
+            pkg_url = server_config['pkg']
+            source = manifest.get("source", "")
+            total_files = len(selected_files)
+            
+            for i, file_path in enumerate(selected_files):
+                # 파일 정보 찾기
+                file_entry = None
+                for entry in manifest.get("file", []):
+                    if entry["path"] == file_path:
+                        file_entry = entry
+                        break
+                
+                if not file_entry:
+                    continue
+                
+                # 상태 업데이트
+                self.root.after(0, lambda f=file_path: status_label.config(text=f"Downloading: {f}"))
+                self.root.after(0, lambda f=file_path: file_listbox.insert(tk.END, f"Downloading: {f}"))
+                
+                # 기존 download_file 함수 사용
+                success = download_file(pkg_url, source, file_entry, download_dir)
+                
+                if success:
+                    # 성공 표시
+                    self.root.after(0, lambda f=file_path: file_listbox.insert(tk.END, f"✓ Completed: {f}"))
+                else:
+                    # 실패 표시
+                    self.root.after(0, lambda f=file_path: file_listbox.insert(tk.END, f"✗ Failed: {f}"))
+                
+                # 진행률 업데이트
+                progress = (i + 1) / total_files * 100
+                self.root.after(0, lambda p=progress: progress_var.set(p))
+            
+            # 완료 메시지
+            self.root.after(0, lambda: status_label.config(text="Download completed!"))
+            self.root.after(0, lambda: messagebox.showinfo("Success", f"Downloaded {total_files} files to {download_dir}"))
+            
+        except Exception as e:
+            self.root.after(0, lambda: status_label.config(text=f"Error: {str(e)}"))
+            self.root.after(0, lambda: messagebox.showerror("Error", f"Download failed: {str(e)}"))
         
     def compare_servers(self):
         if len(self.server_data) < 2:
