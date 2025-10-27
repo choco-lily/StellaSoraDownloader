@@ -70,7 +70,7 @@
 ### セットアップ
 1. リポジトリをクローン：
 ```bash
-git clone https://github.com/yourusername/StellaSoraDownloader.git
+git clone https://github.com/choco-lily/StellaSoraDownloader.git
 cd StellaSoraDownloader
 ```
 

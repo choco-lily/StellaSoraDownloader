@@ -70,7 +70,7 @@ A comprehensive GUI application for downloading Stella Sora game files from mult
 ### Setup
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/StellaSoraDownloader.git
+git clone https://github.com/choco-lily/StellaSoraDownloader.git
 cd StellaSoraDownloader
 ```
 
