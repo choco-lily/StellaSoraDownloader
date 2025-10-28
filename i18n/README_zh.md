@@ -169,10 +169,6 @@ StellaSoraDownloader/
 4. 推送到分支（`git push origin feature/amazing-feature`）
 5. 打开Pull Request
 
-## 许可证
-
-此项目在MIT许可证下获得许可 - 有关详细信息，请参阅LICENSE文件。
-
 ## 支持
 
 支持和问题：
