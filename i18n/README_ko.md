@@ -169,10 +169,6 @@ StellaSoraDownloader/
 4. 브랜치에 푸시 (`git push origin feature/amazing-feature`)
 5. Pull Request 열기
 
-## 라이선스
-
-이 프로젝트는 MIT 라이선스 하에 라이선스가 부여됩니다. 자세한 내용은 LICENSE 파일을 참조하세요.
-
 ## 지원
 
 지원 및 질문:
