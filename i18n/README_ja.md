@@ -169,10 +169,6 @@ StellaSoraDownloader/
 4. ブランチにプッシュ（`git push origin feature/amazing-feature`）
 5. Pull Requestを開く
 
-## ライセンス
-
-このプロジェクトはMITライセンスの下でライセンスされています。詳細については、LICENSEファイルを参照してください。
-
 ## サポート
 
 サポートと質問：
