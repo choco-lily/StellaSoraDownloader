@@ -5,7 +5,7 @@ A comprehensive GUI application for downloading Stella Sora game files from mult
 ## Features
 
 ### 🌐 Multi-Server Support
-- Support for multiple Stella Sora servers (KR, EN, JP, CN)
+- Support for multiple Stella Sora servers (KR, EN, JP, CN, TW)
 - Real-time server status checking
 - Server-specific file size and hash comparison
 
