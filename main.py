@@ -19,6 +19,7 @@ SERVERS = {
     "2": {"name": "Japan (JP)", "api": "https://api-launcher-jp.yo-star.com", "pkg": "https://launcher-pkg-ss-jp.yo-star.com", "tag": "StellaSora_JP", "salt": SALT},
     "3": {"name": "Global (EN)", "api": "https://api-launcher-en.yo-star.com", "pkg": "https://launcher-pkg-ss-en.yo-star.com", "tag": "StellaSora_EN", "salt": SALT},
     "4": {"name": "China (CN)", "api": "https://launcher-api.yostar.net", "pkg": "https://game-launcher-ss-cn.yostar.net", "tag": "StellaSora_CN", "salt": SALT_CN},
+    "5": {"name": "TaiWan (TW)", "api": "https://api-launcher-tw.stargazer-games.com", "pkg": "https://launcher-pkg-ss-hk.stargazer-games.com", "tag": "StellaSora_TW", "salt": SALT},
 }
 
 LAUNCHER_VERSION = "1.6.0"
