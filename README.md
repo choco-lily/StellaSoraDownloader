@@ -14,7 +14,7 @@ A comprehensive GUI application for downloading StellaSora game files from multi
 ## Features
 
 ### 🌐 Multi-Server Support
-- Support for multiple StellaSora servers (KR, EN, JP, CN)
+- Support for multiple StellaSora servers (KR, EN, JP, CN, TW)
 - Real-time server status checking
 - Server-specific file size and hash comparison
 
